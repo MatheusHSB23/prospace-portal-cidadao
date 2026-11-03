@@ -344,7 +344,7 @@
       return;
     }
     state.client = window.supabase.createClient(url, key, {
-      auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true, flowType: 'pkce' },
+      auth: { storageKey: 'prospace-cidadao-auth', autoRefreshToken: true, persistSession: true, detectSessionInUrl: true, flowType: 'pkce' },
     });
 
     state.client.auth.onAuthStateChange((event, session) => {
@@ -850,7 +850,12 @@
   }
 
   async function renderProfile() {
-    const result = assertResult(await state.client.from('profiles').select('full_name,cpf,phone,birth_date').eq('id', state.user.id).single());
+    // maybeSingle evita erro 406 quando o PostgREST não retorna uma linha;
+    // o perfil já carregado na autenticação serve como fallback seguro para a tela.
+    const response = await state.client.from('profiles').select('full_name,cpf,phone,birth_date').eq('id', state.user.id).maybeSingle();
+    if (response.error) throw response.error;
+    const result = response.data || state.profile;
+    if (!result) throw new Error('Não foi possível localizar os dados do seu perfil. Saia da conta e entre novamente.');
     state.profile = { ...state.profile, ...result };
     const p = state.profile;
     return pageLayout(...titles.profile, `<div class="profile-banner"><div class="avatar">${esc(initials(p.full_name))}</div><div><strong>${esc(p.full_name || 'Minha conta')}</strong><small>${esc(state.user.email || '')}</small></div></div><form id="profile-form" class="form-panel"><div class="panel-head"><div><h3>Dados pessoais</h3><p>Atualize as informações da sua conta.</p></div>${icon('user')}</div><div class="form-row"><div class="field"><label for="profile-name">Nome completo</label><input id="profile-name" name="full_name" required minlength="3" value="${esc(p.full_name)}"></div><div class="field"><label for="profile-cpf">CPF (opcional)</label><input id="profile-cpf" name="cpf" inputmode="numeric" value="${esc(p.cpf)}"></div><div class="field"><label for="profile-phone">Telefone</label><input id="profile-phone" name="phone" type="tel" value="${esc(p.phone)}"></div><div class="field"><label for="profile-birth">Data de nascimento</label><input id="profile-birth" name="birth_date" type="date" max="${todayISO()}" value="${esc(p.birth_date)}"></div></div><div class="notice" style="margin:12px 0">${icon('info')}<span>O e-mail de acesso não pode ser alterado nesta tela. Para proteger sua conta, a função/perfil de usuário também não pode ser editada por aqui.</span></div><button class="btn btn-primary" type="submit">${icon('check')} Salvar alterações</button></form><div style="margin-top:16px"><button class="btn btn-danger" data-action="signout">${icon('logout')} Sair da conta</button></div>`);
