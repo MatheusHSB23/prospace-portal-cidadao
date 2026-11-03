@@ -1,0 +1,9 @@
+No Supabase, abra Authentication > URL Configuration > Redirect URLs e adicione:
+
+http://localhost:7358/**
+http://127.0.0.1:7358/**
+
+Ao publicar o portal em um domínio, adicione também:
+https://SEU-DOMINIO/**
+
+Use o mesmo projeto Supabase do aplicativo e do Portal de Gestão. Não use service_role ou sb_secret no navegador.
