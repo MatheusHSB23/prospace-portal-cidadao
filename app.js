@@ -26,6 +26,7 @@
     lastAppointment: null,
     booking: { units: [], services: [], unitId: '', serviceId: '', date: tomorrowISO(), slots: [], slotId: '', reason: '', symptoms: false },
     vaccineTab: 'vaccines',
+    citizenLocation: null,
   };
 
   const titles = {
@@ -344,7 +345,7 @@
       return;
     }
     state.client = window.supabase.createClient(url, key, {
-      auth: { storageKey: 'prospace-cidadao-auth', autoRefreshToken: true, persistSession: true, detectSessionInUrl: true, flowType: 'pkce' },
+      auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true, flowType: 'pkce' },
     });
 
     state.client.auth.onAuthStateChange((event, session) => {
@@ -605,7 +606,7 @@
   }
 
   async function fetchUnits() {
-    return assertResult(await state.client.from('health_units').select('id,name,address,city,state,phone,unit_type,opening_hours').eq('active', true).order('name')) || [];
+    return assertResult(await state.client.from('health_units').select('id,name,address,city,state,phone,unit_type,opening_hours,latitude,longitude').eq('active', true).order('name')) || [];
   }
 
   async function fetchServices() {
@@ -746,10 +747,13 @@
     }
   }
 
+  function distanceKm(a,b) { const rad=n=>n*Math.PI/180, dLat=rad(b.latitude-a.latitude), dLon=rad(b.longitude-a.longitude); const x=Math.sin(dLat/2)**2+Math.cos(rad(a.latitude))*Math.cos(rad(b.latitude))*Math.sin(dLon/2)**2; return 6371*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
   async function renderUnits() {
-    const units = await fetchUnits();
+    let units = await fetchUnits();
     if (!units.length) return pageLayout(...titles.units, emptyState('Nenhuma unidade cadastrada','As unidades ativas aparecerão aqui quando forem cadastradas pela gestão.'));
-    return pageLayout(...titles.units, `<section class="grid grid-2">${units.map(u => `<article class="data-card"><div class="data-icon">${icon('hospital')}</div><div class="data-body"><h3>${esc(u.name)}</h3><p>${esc(u.unit_type || 'Unidade de saúde')} • ${esc(u.address)}, ${esc(u.city)} - ${esc(u.state)}</p>${u.phone ? `<p>${icon('phone')} ${esc(u.phone)}</p>` : ''}${u.opening_hours ? `<p>${icon('clock')} ${esc(u.opening_hours)}</p>` : ''}<div class="data-actions"><button class="btn btn-primary" data-action="book-at-unit" data-id="${esc(u.id)}">${icon('calendar-plus')} Agendar nesta unidade</button></div></div></article>`).join('')}</section>`);
+    if (state.citizenLocation) units = units.map(u=>({...u,_distance:u.latitude!=null&&u.longitude!=null?distanceKm(state.citizenLocation,{latitude:Number(u.latitude),longitude:Number(u.longitude)}):null})).sort((a,b)=>a._distance==null?1:b._distance==null?-1:a._distance-b._distance);
+    const locationTools = `<div class="panel" style="margin-bottom:16px"><div class="panel-head"><div><h3>Unidades próximas</h3><p>${state.citizenLocation?'Lista ordenada pela distância da sua localização.':'Ative sua localização para ordenar as unidades mais próximas.'}</p></div><button class="btn btn-primary" data-action="locate-units">${icon('map-pin')} ${state.citizenLocation?'Atualizar localização':'Usar minha localização'}</button></div>${state.citizenLocation?'<small class="field-hint">Sua posição é usada somente nesta consulta e não é salva.</small>':''}</div>`;
+    return pageLayout(...titles.units, `${locationTools}<section class="grid grid-2">${units.map(u => `<article class="data-card"><div class="data-icon">${icon('hospital')}</div><div class="data-body"><h3>${esc(u.name)}</h3><p>${esc(u.unit_type || 'Unidade de saúde')} • ${esc(u.address)}, ${esc(u.city)} - ${esc(u.state)}</p>${u._distance!=null?`<p><strong>${u._distance.toFixed(1).replace('.',',')} km de você</strong></p>`:''}${u.phone ? `<p>${icon('phone')} ${esc(u.phone)}</p>` : ''}${u.opening_hours ? `<p>${icon('clock')} ${esc(u.opening_hours)}</p>` : ''}<div class="data-actions">${u.latitude!=null&&u.longitude!=null?`<a class="btn btn-soft" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(u.latitude+','+u.longitude)}" target="_blank" rel="noopener">${icon('map-pin')} Como chegar</a>`:''}<button class="btn btn-primary" data-action="book-at-unit" data-id="${esc(u.id)}">${icon('calendar-plus')} Agendar nesta unidade</button></div></div></article>`).join('')}</section>`);
   }
 
   async function renderExams() {
@@ -850,12 +854,7 @@
   }
 
   async function renderProfile() {
-    // maybeSingle evita erro 406 quando o PostgREST não retorna uma linha;
-    // o perfil já carregado na autenticação serve como fallback seguro para a tela.
-    const response = await state.client.from('profiles').select('full_name,cpf,phone,birth_date').eq('id', state.user.id).maybeSingle();
-    if (response.error) throw response.error;
-    const result = response.data || state.profile;
-    if (!result) throw new Error('Não foi possível localizar os dados do seu perfil. Saia da conta e entre novamente.');
+    const result = assertResult(await state.client.from('profiles').select('full_name,cpf,phone,birth_date').eq('id', state.user.id).single());
     state.profile = { ...state.profile, ...result };
     const p = state.profile;
     return pageLayout(...titles.profile, `<div class="profile-banner"><div class="avatar">${esc(initials(p.full_name))}</div><div><strong>${esc(p.full_name || 'Minha conta')}</strong><small>${esc(state.user.email || '')}</small></div></div><form id="profile-form" class="form-panel"><div class="panel-head"><div><h3>Dados pessoais</h3><p>Atualize as informações da sua conta.</p></div>${icon('user')}</div><div class="form-row"><div class="field"><label for="profile-name">Nome completo</label><input id="profile-name" name="full_name" required minlength="3" value="${esc(p.full_name)}"></div><div class="field"><label for="profile-cpf">CPF (opcional)</label><input id="profile-cpf" name="cpf" inputmode="numeric" value="${esc(p.cpf)}"></div><div class="field"><label for="profile-phone">Telefone</label><input id="profile-phone" name="phone" type="tel" value="${esc(p.phone)}"></div><div class="field"><label for="profile-birth">Data de nascimento</label><input id="profile-birth" name="birth_date" type="date" max="${todayISO()}" value="${esc(p.birth_date)}"></div></div><div class="notice" style="margin:12px 0">${icon('info')}<span>O e-mail de acesso não pode ser alterado nesta tela. Para proteger sua conta, a função/perfil de usuário também não pode ser editada por aqui.</span></div><button class="btn btn-primary" type="submit">${icon('check')} Salvar alterações</button></form><div style="margin-top:16px"><button class="btn btn-danger" data-action="signout">${icon('logout')} Sair da conta</button></div>`);
@@ -922,6 +921,12 @@
         if (!protocol) return;
         try { await navigator.clipboard.writeText(protocol); toast('Protocolo copiado.'); }
         catch (_) { toast(`Protocolo: ${protocol}`); }
+        return;
+      }
+      if (action === 'locate-units') {
+        if (!navigator.geolocation) { toast('Geolocalização não disponível neste navegador.', 'error'); return; }
+        actionButton.disabled = true; actionButton.textContent = 'Obtendo localização…';
+        navigator.geolocation.getCurrentPosition(async pos => { state.citizenLocation={latitude:pos.coords.latitude,longitude:pos.coords.longitude}; await renderAuthenticatedPage(); toast('Unidades ordenadas pela proximidade.'); }, err => { actionButton.disabled=false; actionButton.textContent='Usar minha localização'; toast(err.code===1?'Permissão de localização negada.':'Não foi possível obter sua localização.', 'error'); }, {enableHighAccuracy:true,timeout:15000,maximumAge:60000});
         return;
       }
       if (action === 'book-at-unit') {
